@@ -1,10 +1,26 @@
-For total control from the Mega Drive/Genesis controllers (also the OSD menu) it is necessary to update the files 
-MiSTer and menu.rbf from the root of the SD card. You can get an updated version of this files here: 
+A new option has been added in the OSD menu of this core called: "UserIO Joystick" that allows playing with joysticks of Mega Drive/Genesis (DB9) or Neo-Geo/Supergun (DB15). This new feature is disabled by default, therefore you must enter the menu (F12) the first time to activate it and save the config if you want to keep it on for the next time.
 
-https://github.com/antoniovillena/MiSTer_DB9/tree/master/_Splitter_DB9MD
+This core is updated at the same rate as the official core, therefore, it preserves the same functionalities, and also adds the possibility of directly connecting DB9 and DB15 joysticks.
 
-Menu buttons: 
+For controlling everything with the UserIO Joysticks (also the OSD menu), is also needed to update the files: MiSTer and menu.rbf from the root of the SD card. The link to these files is here (download the latest release):
 
-Start + C-> Show OSD menu
-	A-> Enter
-	B-> Esc
+MiSTer_Main: 
+https://github.com/Miguel-T80c/Main_MiSTer/tree/master/releases
+
+Core Menu:
+https://github.com/Miguel-T80c/Menu_MiSTer/tree/master/releases
+
+
+Menu control from DB9 joystick: 
+Start+C-> Show OSD menu  |  A-> Enter  |  B-> Esc
+
+
+Download the new updater script to always have all the cores updated, for this you must place the following file in the /Scripts/update folder. When running it from your MiSTer you will download the official versions of all cores but, if there is a DB9 version available, you'll download the improved DB9 version instead. The first time this script is launched, the process will be slower because it will do a general update. 
+Download the file from this link:
+
+Updater script:
+https://raw.githubusercontent.com/theypsilon/Updater_script_MiSTer_DB9/master/update.sh
+
+
+Also you can get more informaticon about DB9 fork from this links: 
+https://github.com/antoniovillena/MiSTer_DB9.git
