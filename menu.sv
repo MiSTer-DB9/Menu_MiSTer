@@ -270,7 +270,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 	.forced_scandoubler(forced_scandoubler),
-	.joy_raw(JOY_DB1[5:0] | JOY_DB2[5:0]),
+	.joy_raw(JOY_DB1[11:0] | JOY_DB2[11:0]),
 	.status(status),
 	.status_menumask(cfg)
 );
