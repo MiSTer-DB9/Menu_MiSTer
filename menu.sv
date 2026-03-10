@@ -171,14 +171,17 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 	output        USER_OSD,	
 	output  [1:0] USER_MODE,	
 	input   [7:0] USER_IN,
 	output  [7:0] USER_OUT,
+// [MiSTer-DB9 END]
 
 	input         OSD_STATUS
 );
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
 wire   [2:0] JOY_FLAG = {db9md_ena,~db9md_ena,1'b0};   //Assign 3 bits of status (31:29) o (63:61)
 wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
@@ -192,8 +195,19 @@ reg db15_disable = 1'b0;
 reg  db9md_ena=1'b0;
 reg  db9_1p_ena=1'b0,db9_2p_ena=1'b0;
 wire db9_status = db9md_ena ? 1'b1 : USER_IN[7];
-always @(posedge clk_sys) 
+wire db9_idle = ~(|JOYDB9MD_1[11:0] | |JOYDB9MD_2[11:0]);
+reg [23:0] db9_idle_cnt = 24'd0;
+always @(posedge clk_sys)
  begin
+	if(db9md_ena && db9_idle) begin
+		if(db9_idle_cnt < 24'd12499999) db9_idle_cnt <= db9_idle_cnt + 1'd1;
+		else begin
+			db9md_ena <= 1'b0;
+			db15_disable <= 1'b0;
+		end
+	end
+	else db9_idle_cnt <= 24'd0;
+
 	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1;
 	if(~USER_IN[6] || ~USER_IN[2] || ~USER_IN[3]) db15_disable <= 1'b1;
 	if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
@@ -211,7 +225,7 @@ joy_db9md joy_db9md
   .joy_mdsel ( JOY_MDSEL  ),
   .joy_in    ( JOY_MDIN   ),
   .joystick1 ( JOYDB9MD_1 ),
-  .joystick2 ( JOYDB9MD_2 )	  
+  .joystick2 ( JOYDB9MD_2 )
 );
 
 reg [15:0] JOYDB15_1,JOYDB15_2;
@@ -222,8 +236,9 @@ joy_db15 joy_db15
   .JOY_DATA  ( JOY_DATA  ),
   .JOY_LOAD  ( JOY_LOAD  ),
   .joystick1 ( JOYDB15_1 ),
-  .joystick2 ( JOYDB15_2 )	  
+  .joystick2 ( JOYDB15_2 )
 );
+// [MiSTer-DB9 END]
 
 assign ADC_BUS  = 'Z;
 assign {UART_RTS, UART_DTR} = 0;
@@ -270,7 +285,9 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 	.forced_scandoubler(forced_scandoubler),
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 	.joy_raw({USER_MODE, JOY_DB1[11:0] | JOY_DB2[11:0]}),
+// [MiSTer-DB9 END]
 	.status(status),
 	.status_menumask(cfg)
 );
@@ -437,9 +454,11 @@ assign AUDIO_L = mt32_i2s_l;
 assign AUDIO_R = mt32_i2s_r;
 assign AUDIO_S = 1;
 
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 //assign USER_OUT[0]   = 1;
 //assign USER_OUT[1]   = UART_RXD;
 //assign USER_OUT[6:2] = '1;
+// [MiSTer-DB9 END]
 assign UART_TXD      = midi_rx;
 
 
