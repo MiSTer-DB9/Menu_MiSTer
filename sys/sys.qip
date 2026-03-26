@@ -32,3 +32,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) d
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) sysmem.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) sd_card.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) hps_io.sv ]
+# [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+set_global_assignment -name VERILOG_FILE       [file join $::quartus(qip_path) joydb9md.v ]
+set_global_assignment -name VERILOG_FILE       [file join $::quartus(qip_path) joydb15.v ]
+# [MiSTer-DB9 END]
+# [MiSTer-DB9-Pro BEGIN] - Saturn support
+set_global_assignment -name VERILOG_FILE       [file join $::quartus(qip_path) joydb9saturn.v ]
+# [MiSTer-DB9-Pro END]
