@@ -173,10 +173,7 @@ module emu
 	// Set USER_OUT to 1 to read from USER_IN.
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
 	output        USER_OSD,
-	output  [1:0] USER_MODE,
-// [MiSTer-DB9-Pro BEGIN] - generic per-pin push-pull override (Saturn)
 	output  [7:0] USER_PP,
-// [MiSTer-DB9-Pro END]
 	input   [7:0] USER_IN,
 	output  [7:0] USER_OUT,
 // [MiSTer-DB9 END]
@@ -225,8 +222,12 @@ assign       USER_OUT  = saturn_mode ? {1'b1,JOY_SAT_S1,1'b1,JOY_SAT_S0,1'b1,JOY
                         : saturn_any  ? 8'hFF
                         : db9md_ena   ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL}
                         :               {6'b111011,JOY_CLK,JOY_LOAD};
-assign       USER_MODE = saturn_any ? 2'b00 : db9md_ena ? 2'b10 : 2'b01;
-assign       USER_PP   = saturn_mode ? 8'b01010100 : 8'b00000000;
+// USER_PP: per-pin push-pull mask. Saturn (S0/S1/SPLIT) on pins 6/4/2;
+// DB9MD (SELECT/TH) on pins 0/4; DB15 (LOAD/CLK) on pins 0/1; Off=0.
+assign       USER_PP   = saturn_mode ? 8'b01010100
+                       : saturn_any  ? 8'b00000000
+                       : db9md_ena   ? 8'b00010001
+                       :               8'b00000011;
 assign       USER_OSD  = JOY_DB1[10] & JOY_DB1[6];
 
 reg db15_disable = 1'b0;
