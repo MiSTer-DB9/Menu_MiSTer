@@ -25,9 +25,11 @@
 // after 4 consecutive misses.
 // joystick format is active-high and keeps the common DB9 layout aligned:
 //   [15:14] unused
-//   [13]    R
+//   [13]    Unused
 //   [12]    L
-//   [11]    Unused
+//   [11]    R (Mode/Select position; Saturn pad has no native Mode/Select,
+//             so R is exposed here so cores reading [11] as Mode/Select get
+//             a working Saturn button)
 //   [10]    Start
 //   [9]     Z
 //   [8]     Y
@@ -154,7 +156,11 @@ always @(negedge delay[7]) begin
     GET_11: begin
       joySatSr[cur_port] <= {joySatSr[cur_port][2:0], pad_ok};
       if (md_id == PAD_ID_DIGITAL) begin
-        joySatDat[cur_port]   <= {joySatScan[13], joy_in[3], joySatScan[11:0]};
+        // R (joySatScan[13], latched at GET_00) is moved to bit [11] so it
+        // lands on the canonical Mode/Select slot. Bit [13] stays idle-high
+        // (1'b1) so the active-low → active-high inversion at the output
+        // produces 0 there. L (joy_in[3] read live at GET_11) stays at [12].
+        joySatDat[cur_port]   <= {1'b1, joy_in[3], joySatScan[13], joySatScan[10:0]};
         joySatValid[cur_port] <= 1'b1;
       end
       else if (md_id == PAD_ID_ANALOG) begin
