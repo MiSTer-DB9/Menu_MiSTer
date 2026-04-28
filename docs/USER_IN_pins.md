@@ -45,7 +45,7 @@ Detection uses the fixed protocol signature D1=D0=0 in the {S0=1,S1=1} phase (Sa
 During all Saturn phases (`saturn_any=1`), `JOY_DATA` and `JOY_MDIN` are gated to `'1` to prevent the Saturn pad's D2 output (IO[5]) from leaking into the DB15 module and causing false `db15_idle=0`.
 
 ### Audio Noise Prevention
-During Saturn probe, S0/S1 toggling is misinterpreted by the I2S decoder as `i2s_bclk`. The I2S registers (`mt32_i2s_l/r`) are cleared during `saturn_any` and audio outputs are muted.
+During Saturn probe, S0/S1 toggling can be misinterpreted by the I2S decoder as `i2s_bclk`. DB9MD mode also drives SPLIT on IO[4], which can be misread as `i2s_bclk` during 2P splitter activity. The I2S state/registers are cleared and audio outputs are muted while `saturn_any` or `db9md_ena` is active.
 
 ## DB9MD Protocol (Mega Drive/Genesis)
 
@@ -56,9 +56,11 @@ During Saturn probe, S0/S1 toggling is misinterpreted by the I2S decoder as `i2s
 
 ### Auto-Detection
 - `USER_IN[7]` LOW triggers DB9MD mode (`db9md_ena=1`).
-- DB9MD detection fires when `~saturn_mode` (IO[7] readable when not in Saturn probe).
-- Once active, DB9MD keeps mode until both decoded ports stay idle for ~125ms.
-- When idle timeout expires, `db9md_ena` and `db15_disable` are cleared so DB15 can take over.
+- DB9MD detection is immediate in normal idle/DB15 mode so DB15 → DB9MD hot-swap can take over on the first stable low sample.
+- During Saturn phases and the post-transition mask (`db15_arm_delay_cnt != 0`), IO[7] is debounced ~1 ms before latching `db9md_ena` (50 000 `clk_sys` cycles continuous low) to reject plug-mate noise.
+- While DB9MD is active, physical presence is tracked from the Mega Drive TH-low signature (`JOY_MDSEL=0`, `USER_IN[1]=0`, and `USER_IN[2]=0`). If that signature is absent for ~10 ms, DB9MD is treated as removed, `db9md_ena`/`db15_disable` are cleared, and the 10 ms post-transition mask is armed before DB15 can take over.
+- `db9md_ena` is also cleared on Saturn disconnect (`saturn_active → 0`), wiping any state that an IO[7] glitch may have silently latched while Saturn was active and arming the same 10 ms mask.
+- Once active, DB9MD keeps mode while the MD signature is present, even when the controller is idle.
 
 ## DB15 Protocol (Neo-Geo/Supergun)
 
@@ -70,9 +72,9 @@ During Saturn probe, S0/S1 toggling is misinterpreted by the I2S decoder as `i2s
 
 ### Auto-Disable Logic
 ```verilog
-if(~saturn_any & (~USER_IN[6] || ~USER_IN[2] || ~USER_IN[3])) db15_disable <= 1'b1;
+db15_disable_pins_low = ~USER_IN[6] || ~USER_IN[2] || ~USER_IN[3];
 ```
-Gated on `~saturn_any` to prevent false triggers from Saturn push-pull pins.
+The disable condition is gated on `~saturn_any`, `~db9md_ena`, and the post-transition mask to prevent false triggers from Saturn push-pull pins or hot-plug contact noise. It must stay low for ~1 ms before latching `db15_disable`. If `db15_disable` is latched but the disable pins stay high for ~10 ms while Saturn and DB9MD are inactive, DB15 automatically recovers.
 
 ## State Machine
 
