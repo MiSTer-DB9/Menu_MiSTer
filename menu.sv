@@ -181,7 +181,12 @@ module emu
 	input         OSD_STATUS
 );
 
-// [MiSTer-DB9-Pro BEGIN] - DB9/SNAC8 support with Saturn autodetection
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support with Saturn autodetection.
+// Always-free: this is the menu / boot core, so all DB9MD/DB15/Saturn detection
+// runs unconditionally — a user with only a Saturn pad must be able to navigate
+// the OSD even without db9pro.key (boot-core exception, mirrors InputTest_MiSTer).
+// The key check lives entirely in Main_MiSTer (db9_key_saturn_unlocked), which
+// suppresses the shm "Saturn" write and pops a one-shot OSD alert.
 wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
 wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_SPLIT_SAT, JOY_MDSEL, JOY_SAT_S0, JOY_SAT_S1;
 
@@ -234,28 +239,89 @@ reg db15_disable = 1'b0;
 reg db9md_ena = 1'b0;
 reg db9_1p_ena = 1'b0, db9_2p_ena = 1'b0;
 wire db9_status = db9md_ena ? 1'b1 : USER_IN[7];
-wire db9_idle = ~(|JOYDB9MD_1[11:0] | |JOYDB9MD_2[11:0]);
 wire db15_idle = ~(|JOYDB15_1[11:0] | |JOYDB15_2[11:0]);
-reg [23:0] db9_idle_cnt = 24'd0;
 reg [19:0] saturn_probe_cnt = 20'd0;
 reg  [1:0] saturn_cycle_cnt = 2'd0;
+// USER_IN[7] DB9MD detect: normal DB15/idle takeover is immediate;
+// transition windows debounce IO[7] for ~1 ms to reject plug-mate noise.
+// Once active, presence is tracked from the MD TH-low D1/D0=00 signature.
+reg [15:0] db9md_lo_cnt = 16'd0;
+reg [19:0] db9md_absent_cnt = 20'd0;
+localparam [15:0] DB9MD_DEBOUNCE = 16'd49999; // ~1 ms at 50 MHz clk_sys
+localparam [19:0] DB9MD_ABSENT_DELAY = 20'd999999; // ~10 ms at 50 MHz clk_sys
+reg [15:0] db15_disable_cnt = 16'd0;
+reg [19:0] db15_recover_cnt = 20'd0;
+reg [19:0] db15_arm_delay_cnt = 20'd0;
+localparam [15:0] DB15_DISABLE_DEBOUNCE = 16'd49999; // ~1 ms at 50 MHz clk_sys
+localparam [19:0] DB15_RECOVER_DELAY = 20'd999999;   // ~10 ms at 50 MHz clk_sys
+localparam [19:0] DB15_ARM_DELAY = 20'd999999;       // ~10 ms — armed on every controller-state→0 transition (Saturn drop, DB9MD removal)
+wire db9md_detect_low = ~db9md_ena & ~db9_status;
+wire db9md_debounce_active = saturn_any | (db15_arm_delay_cnt != 20'd0);
+wire db9md_present_signature = db9md_ena & ~JOY_MDSEL & ~USER_IN[1] & ~USER_IN[2];
+wire db15_disable_pins_low = ~USER_IN[6] || ~USER_IN[2] || ~USER_IN[3];
+wire db15_disable_armed = ~saturn_any & ~db9md_ena & ~db9md_detect_low & (db15_arm_delay_cnt == 20'd0);
+
+// Common counter-reset bank used by every transition that hands DB9 over to a
+// fresh detection window (DB9MD removal, Saturn-active disconnect, DB9MD
+// immediate-latch). Per-site state changes (db9md_ena, db15_disable, the arm
+// delay) stay at the call site so each transition keeps its specific intent.
+task automatic reset_db9_debounce;
+	begin
+		db9md_lo_cnt     <= 16'd0;
+		db9md_absent_cnt <= 20'd0;
+		db15_disable_cnt <= 16'd0;
+		db15_recover_cnt <= 20'd0;
+	end
+endtask
 
 always @(posedge clk_sys)
  begin
-	// DB9MD idle timeout
-	if(db9md_ena && db9_idle) begin
-		if(db9_idle_cnt < 24'd12499999) db9_idle_cnt <= db9_idle_cnt + 1'd1;
+	if(db15_arm_delay_cnt != 20'd0) db15_arm_delay_cnt <= db15_arm_delay_cnt - 1'd1;
+
+	// DB9MD physical removal: a connected Mega Drive pad periodically returns
+	// D1=D0=0 while TH/SELECT is low. If that signature vanishes for ~10 ms,
+	// open DB15 and mask the next plug-in window.
+	if(db9md_ena) begin
+		if(db9md_present_signature) db9md_absent_cnt <= 20'd0;
+		else if(db9md_absent_cnt < DB9MD_ABSENT_DELAY) db9md_absent_cnt <= db9md_absent_cnt + 1'b1;
 		else begin
 			db9md_ena <= 1'b0;
 			db15_disable <= 1'b0;
+			reset_db9_debounce;
+			db15_arm_delay_cnt <= DB15_ARM_DELAY;
 		end
 	end
-	else db9_idle_cnt <= 24'd0;
+	else db9md_absent_cnt <= 20'd0;
 
-	// DB9MD detection (readable in ALL states including probe)
-	if(~db9md_ena & ~db9_status) db9md_ena <= 1'b1;
-	// DB15 disable latch (gated on ~saturn_any to block during probe/gap/settle)
-	if(~saturn_any & (~USER_IN[6] || ~USER_IN[2] || ~USER_IN[3])) db15_disable <= 1'b1;
+	// DB9MD detection: immediate in normal idle/DB15 mode, debounced during
+	// Saturn phases and the post-transition recovery mask.
+	if(db9md_detect_low) begin
+		if(db9md_debounce_active) begin
+			if(db9md_lo_cnt < DB9MD_DEBOUNCE) db9md_lo_cnt <= db9md_lo_cnt + 1'b1;
+			else                              db9md_ena    <= 1'b1;
+		end
+		else begin
+			db9md_ena <= 1'b1;
+			reset_db9_debounce;
+		end
+	end
+	else db9md_lo_cnt <= 16'd0;
+	// DB15 disable latch, debounced and masked during Saturn/probe/recovery windows.
+	if(~db15_disable_armed || ~db15_disable_pins_low) begin
+		db15_disable_cnt <= 16'd0;
+	end
+	else if(!db15_disable) begin
+		if(db15_disable_cnt < DB15_DISABLE_DEBOUNCE) db15_disable_cnt <= db15_disable_cnt + 1'b1;
+		else                                        db15_disable <= 1'b1;
+	end
+	if(db15_disable && ~saturn_any && ~db9md_ena && ~db15_disable_pins_low) begin
+		if(db15_recover_cnt < DB15_RECOVER_DELAY) db15_recover_cnt <= db15_recover_cnt + 1'b1;
+		else begin
+			db15_disable <= 1'b0;
+			db15_recover_cnt <= 20'd0;
+		end
+	end
+	else db15_recover_cnt <= 20'd0;
 	if(JOYDB9MD_1[2] || JOYDB15_1[2]) db9_1p_ena <= 1'b1;
 	if(~JOYDB9MD_1[2] && JOYDB9MD_2[2] || JOYDB15_2[2]) db9_2p_ena <= 1'b1; //Se niega el del player 1 por si no hay Splitter que no se duplique
 
@@ -264,15 +330,18 @@ always @(posedge clk_sys)
 	// Probe uses the Saturn module with push-pull S0/S1/SPLIT (same as boot).
 	// After 2 probe cycles without detection → timeout → idle (DB15 works).
 	// JOY_DATA/JOY_MDIN gated during all saturn phases (saturn_any).
-	// FSM runs unconditionally — Saturn must work in the menu without a key.
-	// The key check lives entirely in Main_MiSTer (db9_key_saturn_unlocked),
-	// which suppresses the shm "Saturn" write and pops a one-shot OSD alert.
 	if (saturn_active) begin
 		// Saturn pad active: check for disconnect (debounced by module's shift register)
 		if (~JOYDBSATURN_1_VALID & ~JOYDBSATURN_2_VALID) begin
 			saturn_active <= 1'b0;
 			db9_1p_ena <= 1'b1; // a controller was used, enable DB15/DB9MD output
 			db15_disable <= 1'b0; // clear in case Saturn D3 falsely latched it during idle
+			// Wipe any glitch-latched DB9MD mode and reset debounce: post-Saturn
+			// detection starts from a clean slate so a stray IO[7] dip during
+			// saturn_active doesn't leave us stuck in DB9MD on disconnect.
+			db9md_ena <= 1'b0;
+			reset_db9_debounce;
+			db15_arm_delay_cnt <= DB15_ARM_DELAY;
 		end
 		saturn_probe_cnt <= 20'd0;
 		saturn_settle <= 1'b0;
@@ -386,7 +455,7 @@ joy_db9saturn joy_db9saturn
   .joystick1 ( JOYDBSATURN_1       ),
   .joystick2 ( JOYDBSATURN_2       )
 );
-// [MiSTer-DB9-Pro END]
+// [MiSTer-DB9 END]
 
 assign ADC_BUS  = 'Z;
 assign {UART_RTS, UART_DTR} = 0;
@@ -598,11 +667,14 @@ end
 reg [15:0] mt32_i2s_r, mt32_i2s_l;
 wire midi_rx;
 
-// [MiSTer-DB9-Pro BEGIN] - Mute during Saturn phases: probe drives S0/S1 which
-// the I2S decoder misinterprets as i2s_bclk, producing noise from floating pins.
-assign AUDIO_L = saturn_any ? 16'd0 : mt32_i2s_l;
-assign AUDIO_R = saturn_any ? 16'd0 : mt32_i2s_r;
-// [MiSTer-DB9-Pro END]
+// [MiSTer-DB9 BEGIN] - Mute when DB9/Saturn owns USER pins. Saturn S0/S1 and
+// DB9MD SPLIT can be misread by the MT32-pi I2S decoder as i2s_bclk. Always-free:
+// both arms are unconditional in menu.sv (Saturn FSM is ungated here per the
+// boot-core exception, DB9MD is always-free baseline).
+wire mt32_i2s_mute = saturn_any | db9md_ena;
+assign AUDIO_L = mt32_i2s_mute ? 16'd0 : mt32_i2s_l;
+assign AUDIO_R = mt32_i2s_mute ? 16'd0 : mt32_i2s_r;
+// [MiSTer-DB9 END]
 assign AUDIO_S = 1;
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
@@ -684,11 +756,16 @@ always @(posedge CLK_AUDIO) begin : i2s_proc
 		else        mt32_i2s_r <= i2s_buf;
 	end
 	
-	// [MiSTer-DB9-Pro BEGIN] - Clear during Saturn phases: probe drives S0/S1 which
-	// the I2S decoder misinterprets as i2s_bclk, decoding garbage from floating pins.
-	// Clearing here ensures mt32_i2s_l/r are zero when idle resumes.
-	if (RESET | saturn_any) begin
-	// [MiSTer-DB9-Pro END]
+	// [MiSTer-DB9 BEGIN] - Clear while DB9/Saturn owns USER pins so bogus
+	// I2S edge/data state cannot survive into idle.
+	if (RESET | mt32_i2s_mute) begin
+	// [MiSTer-DB9 END]
+		clk_sr     <= 0;
+		i2s_clk    <= 0;
+		old_clk    <= 0;
+		old_ws     <= 0;
+		i2s_next   <= 0;
+		i2s_cnt    <= 0;
 		i2s_buf    <= 0;
 		mt32_i2s_l <= 0;
 		mt32_i2s_r <= 0;
