@@ -229,13 +229,18 @@ wire   [1:0] joy_raw_mode   = saturn_active             ? 2'b01 :  // Saturn
                               (db9_1p_ena | db9_2p_ena) ? 2'b11 :  // DB15
                                                           2'b00;   // Off
 
-assign       USER_OUT  = saturn_mode ? {1'b1,JOY_SAT_S1,1'b1,JOY_SAT_S0,1'b1,JOY_SPLIT_SAT,2'b11}
+// MT32-pi on the user port (BCLK detector below): release every pin and keep
+// the whole DB9 path inert so I2S/I2C traffic is never read as a pad.
+wire         mt32_present;
+assign       USER_OUT  = mt32_present ? 8'hFF
+                        : saturn_mode ? {1'b1,JOY_SAT_S1,1'b1,JOY_SAT_S0,1'b1,JOY_SPLIT_SAT,2'b11}
                         : saturn_any  ? 8'hFF
                         : db9md_ena   ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL}
                         :               {6'b111011,JOY_CLK,JOY_LOAD};
 // USER_PP: per-pin push-pull mask. Saturn (S0/S1/SPLIT) on pins 6/4/2;
 // DB9MD (SELECT/TH) on pins 0/4; DB15 (LOAD/CLK) on pins 0/1; Off=0.
-assign       USER_PP   = saturn_mode ? 8'b01010100
+assign       USER_PP   = mt32_present ? 8'b00000000
+                       : saturn_mode ? 8'b01010100
                        : saturn_any  ? 8'b00000000
                        : db9md_ena   ? 8'b00010001
                        :               8'b00000011;
@@ -411,6 +416,22 @@ always @(posedge clk_sys)
 	end
 	else begin
 		saturn_probe_cnt <= 20'd0;
+	end
+
+	// MT32-pi present: hold every detector at reset (last assignment wins), so
+	// JOY_DB1/2, joy_raw and USER_OSD stay 0 and the I2S path is never muted.
+	// On unplug the FSM restarts from idle.
+	if (mt32_present) begin
+		saturn_active    <= 1'b0;
+		saturn_probe     <= 1'b0;
+		saturn_settle    <= 1'b0;
+		saturn_probe_cnt <= 20'd0;
+		saturn_cycle_cnt <= 2'd0;
+		db9md_ena        <= 1'b0;
+		db15_disable     <= 1'b0;
+		db9_1p_ena       <= 1'b0;
+		db9_2p_ena       <= 1'b0;
+		reset_db9_debounce;
 	end
  end
 
@@ -748,6 +769,31 @@ end
 reg crossed;
 always @(posedge CLK_AUDIO) crossed <= (clk_rate[0].cnt <= clk_rate[1].cnt);
 endgenerate
+
+// [MiSTer-DB9 BEGIN] - MT32-pi presence detector for the DB9 lockout.
+// The menu has no mt32_disable/mt32_use to gate on, so detect the RPi from its
+// I2S bit clock (1-3 MHz) on USER_IN[4]/[6]: clk_rate cnt stays below 31 only
+// while edges arrive faster than ~1.26 us. No pad or FPGA-driven DB9 strobe
+// toggles that fast. 1 ms of continuous BCLK arms a ~100 ms hold.
+reg [14:0] mt32_bclk_cnt = 0;
+reg [21:0] mt32_hold = 0;
+reg        mt32_present_a = 0;
+always @(posedge CLK_AUDIO) begin
+	if (~&clk_rate[0].cnt | ~&clk_rate[1].cnt) begin
+		if (mt32_bclk_cnt != 15'd24575) mt32_bclk_cnt <= mt32_bclk_cnt + 1'd1;
+	end
+	else mt32_bclk_cnt <= 0;
+
+	if (mt32_bclk_cnt == 15'd24575) mt32_hold <= 22'd2457599; // ~100 ms at 24.576 MHz
+	else if (|mt32_hold)              mt32_hold <= mt32_hold - 1'd1;
+
+	mt32_present_a <= |mt32_hold;
+end
+
+reg [1:0] mt32_present_s = 0;
+always @(posedge clk_sys) mt32_present_s <= {mt32_present_s[0], mt32_present_a};
+assign mt32_present = mt32_present_s[1];
+// [MiSTer-DB9 END]
 
 wire   i2s_ws   = crossed ? USER_IN[2] : USER_IN[5];
 wire   i2s_data = crossed ? USER_IN[5] : USER_IN[2];
